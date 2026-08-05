@@ -37,10 +37,10 @@ export function Hero() {
         >
           <source src="/hero-city.mp4" type="video/mp4" />
         </video>
-        {/* Capas oscuras para legibilidad */}
-        <div className="absolute inset-0 bg-navy-950/80" />
-        <div className="absolute inset-0 bg-gradient-to-r from-navy-950 via-navy-950/85 to-navy-900/50" />
-        <div className="absolute inset-0 bg-gradient-to-t from-navy-950 via-transparent to-navy-950/60" />
+        {/* Capas para legibilidad (más claras: dejan ver el video) */}
+        <div className="absolute inset-0 bg-navy-950/30" />
+        <div className="absolute inset-0 bg-gradient-to-r from-navy-950 via-navy-950/55 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-navy-950/70 via-transparent to-transparent" />
         <div
           className="absolute inset-0 opacity-[0.10]"
           style={{
