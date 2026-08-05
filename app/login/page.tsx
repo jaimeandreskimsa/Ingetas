@@ -11,6 +11,8 @@ import {
   Loader2,
   Lock,
   Mail,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Logo } from "@/components/site/Logo";
 
@@ -19,6 +21,7 @@ function LoginInner() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -141,13 +144,23 @@ function LoginInner() {
                   className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-navy-400"
                 />
                 <input
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full rounded-xl border border-navy-200 bg-white py-3 pl-11 pr-4 text-navy-900 outline-none transition focus:border-gold-400 focus:ring-2 focus:ring-gold-400/25"
+                  className="w-full rounded-xl border border-navy-200 bg-white py-3 pl-11 pr-11 text-navy-900 outline-none transition focus:border-gold-400 focus:ring-2 focus:ring-gold-400/25"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={
+                    showPassword ? "Ocultar contraseña" : "Mostrar contraseña"
+                  }
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-navy-400 transition hover:text-navy-700"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
             </div>
 
@@ -171,12 +184,6 @@ function LoginInner() {
               )}
             </button>
           </form>
-
-          <div className="mt-6 rounded-xl border border-navy-100 bg-navy-50/60 p-4 text-xs text-navy-500">
-            <p className="font-semibold text-navy-700">Cuentas de prueba (local):</p>
-            <p className="mt-1">Admin — admin@ingetas.cl / Ingetas2026</p>
-            <p>Usuario — usuario@ingetas.cl / Demo2026</p>
-          </div>
         </div>
       </div>
     </div>
