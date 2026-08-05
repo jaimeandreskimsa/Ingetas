@@ -25,9 +25,24 @@ export function Hero() {
     >
       {/* Fondos animados */}
       <div className="absolute inset-0">
-        <div className="absolute inset-0 bg-gradient-to-br from-navy-950 via-navy-900 to-navy-800" />
+        {/* Video de fondo (ciudad) */}
+        <video
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="auto"
+          poster="/hero-city-poster.jpg"
+          className="absolute inset-0 h-full w-full object-cover"
+        >
+          <source src="/hero-city.mp4" type="video/mp4" />
+        </video>
+        {/* Capas oscuras para legibilidad */}
+        <div className="absolute inset-0 bg-navy-950/80" />
+        <div className="absolute inset-0 bg-gradient-to-r from-navy-950 via-navy-950/85 to-navy-900/50" />
+        <div className="absolute inset-0 bg-gradient-to-t from-navy-950 via-transparent to-navy-950/60" />
         <div
-          className="absolute inset-0 opacity-[0.13]"
+          className="absolute inset-0 opacity-[0.10]"
           style={{
             backgroundImage:
               "linear-gradient(rgba(255,255,255,.35) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.35) 1px, transparent 1px)",
