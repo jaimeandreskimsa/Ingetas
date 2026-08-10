@@ -539,14 +539,6 @@ export function DriveBrowser({
               <Users size={18} /> Usuarios
             </Link>
           )}
-          <a
-            href="https://drive.google.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-navy-600 transition hover:bg-navy-50"
-          >
-            <ExternalLink size={18} /> Abrir Google Drive
-          </a>
         </nav>
         <div className="border-t border-navy-100 p-4">
           {storage && (
