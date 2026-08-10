@@ -30,10 +30,22 @@ import {
   Users,
   Cloud,
   ShieldAlert,
+  Pencil,
+  FolderInput,
+  CopyPlus,
+  Info,
+  RotateCcw,
+  ChevronDown,
 } from "lucide-react";
 import { Logo } from "@/components/site/Logo";
 import { FileIcon } from "./FileIcon";
 import { PreviewModal } from "./PreviewModal";
+import {
+  Modal,
+  RenameDialog,
+  MoveDialog,
+  DetailsModal,
+} from "./DriveDialogs";
 import { formatBytes, formatDate, fileKind, canPreview } from "@/lib/format";
 import type { DriveFile } from "@/lib/drive";
 
@@ -66,6 +78,17 @@ export function DriveBrowser({
     loading: boolean;
   } | null>(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [renameFile, setRenameFile] = useState<DriveFile | null>(null);
+  const [moveItems, setMoveItems] = useState<DriveFile[] | null>(null);
+  const [detailsFile, setDetailsFile] = useState<DriveFile | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [trashMode, setTrashMode] = useState(false);
+  const [nextToken, setNextToken] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [storage, setStorage] = useState<{
+    usage: number;
+    limit: number | null;
+  } | null>(null);
   const [uploads, setUploads] = useState<
     { id: string; name: string; progress: number }[]
   >([]);
@@ -88,9 +111,11 @@ export function DriveBrowser({
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
+    setSelected(new Set());
     try {
       const p = new URLSearchParams({ sort });
-      if (debounced) p.set("q", debounced);
+      if (trashMode) p.set("trashed", "1");
+      else if (debounced) p.set("q", debounced);
       else p.set("folderId", folderId);
       const res = await fetch(`/api/drive/list?${p.toString()}`);
       if (res.status === 401) {
@@ -106,28 +131,86 @@ export function DriveBrowser({
       if (!res.ok) throw new Error(data.error || "Error al cargar");
       setNotConnected(false);
       setFiles(data.files || []);
-      setBreadcrumb(debounced ? [] : data.breadcrumb || []);
+      setNextToken(data.nextPageToken || null);
+      setBreadcrumb(debounced || trashMode ? [] : data.breadcrumb || []);
     } catch (e: any) {
       setError(e.message || "No se pudieron cargar los archivos");
     } finally {
       setLoading(false);
     }
-  }, [folderId, debounced, sort]);
+  }, [folderId, debounced, sort, trashMode]);
 
   useEffect(() => {
     load();
   }, [load]);
 
+  // Uso de almacenamiento de la cuenta (sidebar)
+  useEffect(() => {
+    fetch("/api/drive/storage")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.quota?.usage) {
+          setStorage({
+            usage: parseInt(d.quota.usage, 10),
+            limit: d.quota.limit ? parseInt(d.quota.limit, 10) : null,
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const loadMore = useCallback(async () => {
+    if (!nextToken || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const p = new URLSearchParams({ sort, pageToken: nextToken });
+      if (trashMode) p.set("trashed", "1");
+      else if (debounced) p.set("q", debounced);
+      else p.set("folderId", folderId);
+      const res = await fetch(`/api/drive/list?${p.toString()}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setFiles((f) => [...f, ...(data.files || [])]);
+      setNextToken(data.nextPageToken || null);
+    } catch {
+      notify("No se pudieron cargar más archivos");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextToken, loadingMore, sort, trashMode, debounced, folderId, notify]);
+
   function openFolder(id: string) {
     setSearch("");
     setDebounced("");
+    setTrashMode(false);
     setFolderId(id);
   }
 
+  function openTrash() {
+    setSearch("");
+    setDebounced("");
+    setTrashMode(true);
+  }
+
   function onItemClick(file: DriveFile) {
+    if (trashMode) {
+      // En la papelera no se navega dentro de carpetas
+      if (fileKind(file.mimeType) !== "folder" && canPreview(file.mimeType))
+        setPreview(file);
+      return;
+    }
     if (fileKind(file.mimeType) === "folder") openFolder(file.id!);
     else if (canPreview(file.mimeType)) setPreview(file);
     else if (file.webViewLink) window.open(file.webViewLink, "_blank");
+  }
+
+  function toggleSelect(id: string) {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
   }
 
   // ---- Subida de archivos ----
@@ -278,22 +361,127 @@ export function DriveBrowser({
     }
   }
 
-  // ---- Eliminar ----
+  // ---- Eliminar / restaurar / copiar ----
+  async function deleteOne(fileId: string, permanent: boolean) {
+    const res = await fetch("/api/drive/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fileId, permanent }),
+    });
+    if (!res.ok) throw new Error();
+  }
+
   async function doDelete(file: DriveFile) {
-    if (!confirm(`¿Enviar "${file.name}" a la papelera de Google Drive?`))
-      return;
+    const msg = trashMode
+      ? `¿Eliminar "${file.name}" DEFINITIVAMENTE? Esta acción no se puede deshacer.`
+      : `¿Enviar "${file.name}" a la papelera? Podrás restaurarlo desde la Papelera.`;
+    if (!confirm(msg)) return;
     try {
-      const res = await fetch("/api/drive/delete", {
+      await deleteOne(file.id!, trashMode);
+      notify(
+        trashMode
+          ? `"${file.name}" eliminado definitivamente`
+          : `"${file.name}" enviado a la papelera`
+      );
+      setFiles((f) => f.filter((x) => x.id !== file.id));
+    } catch {
+      notify("No se pudo eliminar");
+    }
+  }
+
+  async function doRestore(file: DriveFile) {
+    try {
+      const res = await fetch("/api/drive/restore", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fileId: file.id }),
       });
       if (!res.ok) throw new Error();
-      notify(`"${file.name}" enviado a la papelera`);
+      notify(`"${file.name}" restaurado`);
       setFiles((f) => f.filter((x) => x.id !== file.id));
     } catch {
-      notify("No se pudo eliminar");
+      notify("No se pudo restaurar");
     }
+  }
+
+  async function doCopy(file: DriveFile) {
+    notify(`Creando copia de "${file.name}"…`);
+    try {
+      const res = await fetch("/api/drive/copy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileId: file.id }),
+      });
+      if (!res.ok) throw new Error();
+      notify("Copia creada");
+      load();
+    } catch {
+      notify("No se pudo copiar");
+    }
+  }
+
+  async function emptyTrash() {
+    if (
+      !confirm(
+        "¿Vaciar la papelera? TODOS los elementos se eliminarán definitivamente. Esta acción no se puede deshacer."
+      )
+    )
+      return;
+    try {
+      const res = await fetch("/api/drive/empty-trash", { method: "POST" });
+      if (!res.ok) throw new Error();
+      notify("Papelera vaciada");
+      load();
+    } catch {
+      notify("No se pudo vaciar la papelera");
+    }
+  }
+
+  // ---- Acciones en lote sobre la selección ----
+  const selectedFiles = files.filter((f) => selected.has(f.id!));
+
+  function bulkDownload() {
+    const ids = Array.from(selected).join(",");
+    window.location.href = `/api/drive/download-zip?ids=${ids}`;
+  }
+
+  async function bulkDelete() {
+    const n = selected.size;
+    const msg = trashMode
+      ? `¿Eliminar ${n} elemento(s) DEFINITIVAMENTE? No se puede deshacer.`
+      : `¿Enviar ${n} elemento(s) a la papelera?`;
+    if (!confirm(msg)) return;
+    const ids = Array.from(selected);
+    const results = await Promise.allSettled(
+      ids.map((id) => deleteOne(id, trashMode))
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    notify(
+      failed
+        ? `${n - failed} eliminados, ${failed} con error`
+        : trashMode
+        ? `${n} elemento(s) eliminados definitivamente`
+        : `${n} elemento(s) enviados a la papelera`
+    );
+    load();
+  }
+
+  async function bulkRestore() {
+    const ids = Array.from(selected);
+    const results = await Promise.allSettled(
+      ids.map((id) =>
+        fetch("/api/drive/restore", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileId: id }),
+        }).then((r) => {
+          if (!r.ok) throw new Error();
+        })
+      )
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    notify(failed ? `Restaurados con ${failed} error(es)` : "Elementos restaurados");
+    load();
   }
 
   const folders = files.filter((f) => fileKind(f.mimeType) === "folder");
@@ -332,10 +520,16 @@ export function DriveBrowser({
         </div>
         <nav className="flex-1 space-y-1 p-4">
           <SideItem
-            active={folderId === "root" && !debounced}
+            active={!trashMode && folderId === "root" && !debounced}
             icon={HardDrive}
             label="Mi unidad"
             onClick={() => openFolder("root")}
+          />
+          <SideItem
+            active={trashMode}
+            icon={Trash2}
+            label="Papelera"
+            onClick={openTrash}
           />
           {isAdmin && (
             <Link
@@ -355,6 +549,39 @@ export function DriveBrowser({
           </a>
         </nav>
         <div className="border-t border-navy-100 p-4">
+          {storage && (
+            <div className="mb-3 rounded-lg bg-navy-50/60 p-3">
+              <div className="mb-1.5 flex items-center gap-2 text-xs font-medium text-navy-600">
+                <Cloud size={14} className="text-navy-400" /> Almacenamiento
+              </div>
+              {storage.limit ? (
+                <>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-navy-100">
+                    <div
+                      className={`h-full rounded-full ${
+                        storage.usage / storage.limit > 0.9
+                          ? "bg-red-500"
+                          : "bg-gold-400"
+                      }`}
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          (storage.usage / storage.limit) * 100
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-navy-500">
+                    {formatBytes(storage.usage)} de {formatBytes(storage.limit)}
+                  </p>
+                </>
+              ) : (
+                <p className="text-[11px] text-navy-500">
+                  {formatBytes(storage.usage)} usados
+                </p>
+              )}
+            </div>
+          )}
           <Link
             href="/"
             className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-navy-600 transition hover:bg-navy-50"
@@ -394,7 +621,11 @@ export function DriveBrowser({
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-navy-100 bg-white px-4 py-3 sm:px-6">
           {/* Breadcrumb */}
           <div className="flex min-w-0 items-center gap-1 text-sm">
-            {debounced ? (
+            {trashMode ? (
+              <span className="flex items-center gap-1.5 font-medium text-navy-900">
+                <Trash2 size={16} /> Papelera
+              </span>
+            ) : debounced ? (
               <span className="font-medium text-navy-900">
                 Resultados para “{debounced}”
               </span>
@@ -466,27 +697,40 @@ export function DriveBrowser({
               <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
             </button>
 
-            <button
-              onClick={() => setNewFolderOpen(true)}
-              className="hidden items-center gap-2 rounded-lg border border-navy-200 px-3 py-2 text-sm font-medium text-navy-700 transition hover:bg-navy-50 sm:inline-flex"
-            >
-              <FolderPlus size={18} /> Carpeta
-            </button>
+            {trashMode ? (
+              isAdmin && (
+                <button
+                  onClick={emptyTrash}
+                  className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
+                >
+                  <Trash2 size={16} /> Vaciar papelera
+                </button>
+              )
+            ) : (
+              <>
+                <button
+                  onClick={() => setNewFolderOpen(true)}
+                  className="hidden items-center gap-2 rounded-lg border border-navy-200 px-3 py-2 text-sm font-medium text-navy-700 transition hover:bg-navy-50 sm:inline-flex"
+                >
+                  <FolderPlus size={18} /> Carpeta
+                </button>
 
-            <button
-              onClick={triggerFolderUpload}
-              className="hidden items-center gap-2 rounded-lg border border-navy-200 px-3 py-2 text-sm font-medium text-navy-700 transition hover:bg-navy-50 sm:inline-flex"
-              title="Subir una carpeta completa con sus subcarpetas"
-            >
-              <FolderUp size={18} /> Subir carpeta
-            </button>
+                <button
+                  onClick={triggerFolderUpload}
+                  className="hidden items-center gap-2 rounded-lg border border-navy-200 px-3 py-2 text-sm font-medium text-navy-700 transition hover:bg-navy-50 sm:inline-flex"
+                  title="Subir una carpeta completa con sus subcarpetas"
+                >
+                  <FolderUp size={18} /> Subir carpeta
+                </button>
 
-            <button
-              onClick={triggerUpload}
-              className="inline-flex items-center gap-2 rounded-lg bg-gold-400 px-4 py-2 text-sm font-semibold text-navy-950 transition hover:bg-gold-300"
-            >
-              <Upload size={18} /> Subir
-            </button>
+                <button
+                  onClick={triggerUpload}
+                  className="inline-flex items-center gap-2 rounded-lg bg-gold-400 px-4 py-2 text-sm font-semibold text-navy-950 transition hover:bg-gold-300"
+                >
+                  <Upload size={18} /> Subir
+                </button>
+              </>
+            )}
             <input
               ref={fileInput}
               type="file"
@@ -529,7 +773,7 @@ export function DriveBrowser({
             </div>
           )}
 
-          {!debounced && folderId !== "root" && (
+          {!debounced && !trashMode && folderId !== "root" && (
             <button
               onClick={() =>
                 openFolder(
@@ -563,11 +807,19 @@ export function DriveBrowser({
             </div>
           ) : files.length === 0 ? (
             <div className="flex h-64 flex-col items-center justify-center text-center text-navy-400">
-              <FolderPlus size={48} className="mb-3 opacity-40" />
+              {trashMode ? (
+                <Trash2 size={48} className="mb-3 opacity-40" />
+              ) : (
+                <FolderPlus size={48} className="mb-3 opacity-40" />
+              )}
               <p className="font-medium text-navy-600">
-                {debounced ? "Sin resultados" : "Esta carpeta está vacía"}
+                {trashMode
+                  ? "La papelera está vacía"
+                  : debounced
+                  ? "Sin resultados"
+                  : "Esta carpeta está vacía"}
               </p>
-              {!debounced && (
+              {!debounced && !trashMode && (
                 <button
                   onClick={triggerUpload}
                   className="mt-3 text-sm font-semibold text-gold-600 hover:text-gold-500"
@@ -576,27 +828,63 @@ export function DriveBrowser({
                 </button>
               )}
             </div>
-          ) : view === "grid" ? (
-            <GridView
-              folders={folders}
-              docs={docs}
-              menuFor={menuFor}
-              setMenuFor={setMenuFor}
-              onItemClick={onItemClick}
-              onPreview={setPreview}
-              onShare={doShare}
-              onDelete={doDelete}
-            />
           ) : (
-            <TableView
-              files={files}
-              menuFor={menuFor}
-              setMenuFor={setMenuFor}
-              onItemClick={onItemClick}
-              onPreview={setPreview}
-              onShare={doShare}
-              onDelete={doDelete}
-            />
+            <>
+              {view === "grid" ? (
+                <GridView
+                  folders={folders}
+                  docs={docs}
+                  menuFor={menuFor}
+                  setMenuFor={setMenuFor}
+                  onItemClick={onItemClick}
+                  onPreview={setPreview}
+                  onShare={doShare}
+                  onDelete={doDelete}
+                  trashMode={trashMode}
+                  onRename={setRenameFile}
+                  onMove={(f: DriveFile) => setMoveItems([f])}
+                  onCopy={doCopy}
+                  onDetails={setDetailsFile}
+                  onRestore={doRestore}
+                  selected={selected}
+                  toggleSelect={toggleSelect}
+                />
+              ) : (
+                <TableView
+                  files={files}
+                  menuFor={menuFor}
+                  setMenuFor={setMenuFor}
+                  onItemClick={onItemClick}
+                  onPreview={setPreview}
+                  onShare={doShare}
+                  onDelete={doDelete}
+                  trashMode={trashMode}
+                  onRename={setRenameFile}
+                  onMove={(f: DriveFile) => setMoveItems([f])}
+                  onCopy={doCopy}
+                  onDetails={setDetailsFile}
+                  onRestore={doRestore}
+                  selected={selected}
+                  toggleSelect={toggleSelect}
+                />
+              )}
+              {nextToken && (
+                <div className="mt-6 flex justify-center">
+                  <button
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                    className="inline-flex items-center gap-2 rounded-lg border border-navy-200 bg-white px-4 py-2.5 text-sm font-medium text-navy-700 transition hover:bg-navy-50 disabled:opacity-50"
+                  >
+                    {loadingMore ? (
+                      <Loader2 className="animate-spin" size={16} />
+                    ) : (
+                      <ChevronDown size={16} />
+                    )}
+                    Cargar más archivos
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </main>
       </div>
@@ -626,6 +914,52 @@ export function DriveBrowser({
         </div>
       )}
 
+      {/* Barra de selección múltiple */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1 rounded-full border border-navy-100 bg-white px-2 py-1.5 shadow-2xl">
+          <span className="px-3 text-sm font-semibold text-navy-800">
+            {selected.size} seleccionado{selected.size > 1 ? "s" : ""}
+          </span>
+          {!trashMode && (
+            <>
+              <button
+                onClick={bulkDownload}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium text-navy-700 transition hover:bg-navy-50"
+              >
+                <FolderDown size={16} /> ZIP
+              </button>
+              <button
+                onClick={() => setMoveItems(selectedFiles)}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium text-navy-700 transition hover:bg-navy-50"
+              >
+                <FolderInput size={16} /> Mover
+              </button>
+            </>
+          )}
+          {trashMode && (
+            <button
+              onClick={bulkRestore}
+              className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium text-navy-700 transition hover:bg-navy-50"
+            >
+              <RotateCcw size={16} /> Restaurar
+            </button>
+          )}
+          <button
+            onClick={bulkDelete}
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
+          >
+            <Trash2 size={16} /> Eliminar
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="rounded-full p-2 text-navy-400 transition hover:bg-navy-50"
+            aria-label="Cancelar selección"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       {/* Toast */}
       {toast && (
         <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-full bg-navy-900 px-5 py-2.5 text-sm font-medium text-white shadow-xl">
@@ -650,6 +984,35 @@ export function DriveBrowser({
             notify("Carpeta creada");
           }}
         />
+      )}
+      {renameFile && (
+        <RenameDialog
+          file={renameFile}
+          onClose={() => setRenameFile(null)}
+          onDone={() => {
+            setRenameFile(null);
+            load();
+            notify("Renombrado correctamente");
+          }}
+        />
+      )}
+      {moveItems && (
+        <MoveDialog
+          items={moveItems}
+          onClose={() => setMoveItems(null)}
+          onMoved={(moved, errors) => {
+            setMoveItems(null);
+            load();
+            notify(
+              errors
+                ? `${moved} movidos, ${errors} con error`
+                : `${moved} elemento(s) movidos`
+            );
+          }}
+        />
+      )}
+      {detailsFile && (
+        <DetailsModal file={detailsFile} onClose={() => setDetailsFile(null)} />
       )}
     </div>
   );
@@ -777,6 +1140,12 @@ function RowMenu({
   onPreview,
   onShare,
   onDelete,
+  trashMode,
+  onRename,
+  onMove,
+  onCopy,
+  onDetails,
+  onRestore,
 }: {
   file: DriveFile;
   open: boolean;
@@ -784,8 +1153,19 @@ function RowMenu({
   onPreview: (f: DriveFile) => void;
   onShare: (f: DriveFile) => void;
   onDelete: (f: DriveFile) => void;
+  trashMode?: boolean;
+  onRename?: (f: DriveFile) => void;
+  onMove?: (f: DriveFile) => void;
+  onCopy?: (f: DriveFile) => void;
+  onDetails?: (f: DriveFile) => void;
+  onRestore?: (f: DriveFile) => void;
 }) {
   const isFolder = fileKind(file.mimeType) === "folder";
+  const close = () => setOpen(null);
+  const item = (fn?: (f: DriveFile) => void) => () => {
+    close();
+    fn?.(file);
+  };
   return (
     <div className="relative">
       <button
@@ -800,68 +1180,97 @@ function RowMenu({
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(null)} />
+          <div className="fixed inset-0 z-30" onClick={close} />
           <div
-            className="absolute right-0 top-9 z-40 w-44 overflow-hidden rounded-xl border border-navy-100 bg-white py-1 shadow-xl"
+            className="absolute right-0 top-9 z-40 w-48 overflow-hidden rounded-xl border border-navy-100 bg-white py-1 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            {!isFolder && canPreview(file.mimeType) && (
-              <MenuBtn
-                icon={Eye}
-                label="Previsualizar"
-                onClick={() => {
-                  setOpen(null);
-                  onPreview(file);
-                }}
-              />
+            {trashMode ? (
+              <>
+                <MenuBtn
+                  icon={RotateCcw}
+                  label="Restaurar"
+                  onClick={item(onRestore)}
+                />
+                <MenuBtn icon={Info} label="Detalles" onClick={item(onDetails)} />
+                <div className="my-1 h-px bg-navy-100" />
+                <MenuBtn
+                  icon={Trash2}
+                  label="Eliminar definitivo"
+                  danger
+                  onClick={item(onDelete)}
+                />
+              </>
+            ) : (
+              <>
+                {!isFolder && canPreview(file.mimeType) && (
+                  <MenuBtn
+                    icon={Eye}
+                    label="Previsualizar"
+                    onClick={item(onPreview)}
+                  />
+                )}
+                {!isFolder && (
+                  <a
+                    href={`/api/drive/download?fileId=${file.id}`}
+                    className="flex items-center gap-3 px-4 py-2.5 text-sm text-navy-700 transition hover:bg-navy-50"
+                    onClick={close}
+                  >
+                    <Download size={16} /> Descargar
+                  </a>
+                )}
+                {isFolder && (
+                  <a
+                    href={`/api/drive/download-folder?folderId=${file.id}`}
+                    className="flex items-center gap-3 px-4 py-2.5 text-sm text-navy-700 transition hover:bg-navy-50"
+                    onClick={close}
+                  >
+                    <FolderDown size={16} /> Descargar (ZIP)
+                  </a>
+                )}
+                <MenuBtn
+                  icon={Pencil}
+                  label="Renombrar"
+                  onClick={item(onRename)}
+                />
+                <MenuBtn
+                  icon={FolderInput}
+                  label="Mover a…"
+                  onClick={item(onMove)}
+                />
+                {!isFolder && (
+                  <MenuBtn
+                    icon={CopyPlus}
+                    label="Hacer una copia"
+                    onClick={item(onCopy)}
+                  />
+                )}
+                <MenuBtn
+                  icon={Share2}
+                  label="Compartir"
+                  onClick={item(onShare)}
+                />
+                <MenuBtn icon={Info} label="Detalles" onClick={item(onDetails)} />
+                {file.webViewLink && (
+                  <a
+                    href={file.webViewLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-3 px-4 py-2.5 text-sm text-navy-700 transition hover:bg-navy-50"
+                    onClick={close}
+                  >
+                    <ExternalLink size={16} /> Abrir en Drive
+                  </a>
+                )}
+                <div className="my-1 h-px bg-navy-100" />
+                <MenuBtn
+                  icon={Trash2}
+                  label="Eliminar"
+                  danger
+                  onClick={item(onDelete)}
+                />
+              </>
             )}
-            {!isFolder && (
-              <a
-                href={`/api/drive/download?fileId=${file.id}`}
-                className="flex items-center gap-3 px-4 py-2.5 text-sm text-navy-700 transition hover:bg-navy-50"
-                onClick={() => setOpen(null)}
-              >
-                <Download size={16} /> Descargar
-              </a>
-            )}
-            {isFolder && (
-              <a
-                href={`/api/drive/download-folder?folderId=${file.id}`}
-                className="flex items-center gap-3 px-4 py-2.5 text-sm text-navy-700 transition hover:bg-navy-50"
-                onClick={() => setOpen(null)}
-              >
-                <FolderDown size={16} /> Descargar (ZIP)
-              </a>
-            )}
-            <MenuBtn
-              icon={Share2}
-              label="Compartir"
-              onClick={() => {
-                setOpen(null);
-                onShare(file);
-              }}
-            />
-            {file.webViewLink && (
-              <a
-                href={file.webViewLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-3 px-4 py-2.5 text-sm text-navy-700 transition hover:bg-navy-50"
-                onClick={() => setOpen(null)}
-              >
-                <ExternalLink size={16} /> Abrir en Drive
-              </a>
-            )}
-            <div className="my-1 h-px bg-navy-100" />
-            <MenuBtn
-              icon={Trash2}
-              label="Eliminar"
-              danger
-              onClick={() => {
-                setOpen(null);
-                onDelete(file);
-              }}
-            />
           </div>
         </>
       )}
@@ -894,6 +1303,27 @@ function MenuBtn({
   );
 }
 
+function SelectBox({
+  checked,
+  onToggle,
+  className = "",
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  className?: string;
+}) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={onToggle}
+      onClick={(e) => e.stopPropagation()}
+      className={`h-4 w-4 cursor-pointer rounded border-navy-300 accent-gold-500 ${className}`}
+      aria-label="Seleccionar"
+    />
+  );
+}
+
 function GridView({
   folders,
   docs,
@@ -903,7 +1333,26 @@ function GridView({
   onPreview,
   onShare,
   onDelete,
+  trashMode,
+  onRename,
+  onMove,
+  onCopy,
+  onDetails,
+  onRestore,
+  selected,
+  toggleSelect,
 }: any) {
+  const menuProps = {
+    onPreview,
+    onShare,
+    onDelete,
+    trashMode,
+    onRename,
+    onMove,
+    onCopy,
+    onDetails,
+    onRestore,
+  };
   return (
     <div className="space-y-8">
       {folders.length > 0 && (
@@ -916,8 +1365,16 @@ function GridView({
               <button
                 key={f.id}
                 onClick={() => onItemClick(f)}
-                className="group flex items-center gap-3 rounded-xl border border-navy-100 bg-white p-3.5 text-left transition hover:border-gold-300 hover:shadow-md"
+                className={`group flex items-center gap-3 rounded-xl border bg-white p-3.5 text-left transition hover:border-gold-300 hover:shadow-md ${
+                  selected.has(f.id)
+                    ? "border-gold-400 ring-1 ring-gold-400/40"
+                    : "border-navy-100"
+                }`}
               >
+                <SelectBox
+                  checked={selected.has(f.id)}
+                  onToggle={() => toggleSelect(f.id)}
+                />
                 <FileIcon mimeType={f.mimeType} />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-navy-800">
                   {f.name}
@@ -927,9 +1384,7 @@ function GridView({
                     file={f}
                     open={menuFor === f.id}
                     setOpen={setMenuFor}
-                    onPreview={onPreview}
-                    onShare={onShare}
-                    onDelete={onDelete}
+                    {...menuProps}
                   />
                 </span>
               </button>
@@ -950,7 +1405,11 @@ function GridView({
                 <div
                   key={f.id}
                   onClick={() => onItemClick(f)}
-                  className="group cursor-pointer overflow-hidden rounded-xl border border-navy-100 bg-white transition hover:border-gold-300 hover:shadow-md"
+                  className={`group cursor-pointer overflow-hidden rounded-xl border bg-white transition hover:border-gold-300 hover:shadow-md ${
+                    selected.has(f.id)
+                      ? "border-gold-400 ring-1 ring-gold-400/40"
+                      : "border-navy-100"
+                  }`}
                 >
                   <div className="relative flex h-32 items-center justify-center overflow-hidden bg-navy-50">
                     {isImage ? (
@@ -965,6 +1424,16 @@ function GridView({
                       <FileIcon mimeType={f.mimeType} size={34} />
                     )}
                     <span
+                      className="absolute left-1.5 top-1.5 rounded-md bg-white/90 p-1 shadow-sm"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <SelectBox
+                        checked={selected.has(f.id)}
+                        onToggle={() => toggleSelect(f.id)}
+                        className="block"
+                      />
+                    </span>
+                    <span
                       className="absolute right-1.5 top-1.5 rounded-lg bg-white/90 shadow-sm"
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -972,9 +1441,7 @@ function GridView({
                         file={f}
                         open={menuFor === f.id}
                         setOpen={setMenuFor}
-                        onPreview={onPreview}
-                        onShare={onShare}
-                        onDelete={onDelete}
+                        {...menuProps}
                       />
                     </span>
                   </div>
@@ -1004,12 +1471,43 @@ function TableView({
   onPreview,
   onShare,
   onDelete,
+  trashMode,
+  onRename,
+  onMove,
+  onCopy,
+  onDetails,
+  onRestore,
+  selected,
+  toggleSelect,
 }: any) {
+  const menuProps = {
+    onPreview,
+    onShare,
+    onDelete,
+    trashMode,
+    onRename,
+    onMove,
+    onCopy,
+    onDetails,
+    onRestore,
+  };
+  const allSelected =
+    files.length > 0 && files.every((f: DriveFile) => selected.has(f.id));
   return (
     <div className="overflow-hidden rounded-xl border border-navy-100 bg-white">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-navy-100 bg-navy-50/60 text-left text-xs uppercase tracking-wider text-navy-400">
+            <th className="w-10 px-4 py-3">
+              <SelectBox
+                checked={allSelected}
+                onToggle={() =>
+                  files.forEach((f: DriveFile) => {
+                    if (allSelected === selected.has(f.id)) toggleSelect(f.id);
+                  })
+                }
+              />
+            </th>
             <th className="px-4 py-3 font-semibold">Nombre</th>
             <th className="hidden px-4 py-3 font-semibold sm:table-cell">
               Tamaño
@@ -1025,8 +1523,16 @@ function TableView({
             <tr
               key={f.id}
               onClick={() => onItemClick(f)}
-              className="cursor-pointer border-b border-navy-50 transition last:border-0 hover:bg-navy-50/50"
+              className={`cursor-pointer border-b border-navy-50 transition last:border-0 hover:bg-navy-50/50 ${
+                selected.has(f.id) ? "bg-gold-50/50" : ""
+              }`}
             >
+              <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                <SelectBox
+                  checked={selected.has(f.id)}
+                  onToggle={() => toggleSelect(f.id)}
+                />
+              </td>
               <td className="px-4 py-3">
                 <div className="flex items-center gap-3">
                   <FileIcon mimeType={f.mimeType} size={18} />
@@ -1049,9 +1555,7 @@ function TableView({
                     file={f}
                     open={menuFor === f.id}
                     setOpen={setMenuFor}
-                    onPreview={onPreview}
-                    onShare={onShare}
-                    onDelete={onDelete}
+                    {...menuProps}
                   />
                 </span>
               </td>
@@ -1166,37 +1670,3 @@ function NewFolderDialog({
   );
 }
 
-function Modal({
-  title,
-  children,
-  onClose,
-}: {
-  title: string;
-  children: React.ReactNode;
-  onClose: () => void;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-navy-950/50 p-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="font-display text-lg font-bold text-navy-900">
-            {title}
-          </h3>
-          <button
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-navy-400 hover:bg-navy-50"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}

@@ -4,22 +4,27 @@ import { getDriveClient, driveErrorResponse } from "@/lib/drive";
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/drive/delete  { fileId }
- * Envía el archivo a la papelera (no lo elimina de forma permanente).
+ * POST /api/drive/delete  { fileId, permanent? }
+ * Sin permanent: envía el archivo a la papelera (recuperable).
+ * Con permanent (desde la vista Papelera): lo elimina definitivamente.
  */
 export async function POST(req: NextRequest) {
   try {
     const drive = await getDriveClient();
-    const { fileId } = await req.json();
+    const { fileId, permanent } = await req.json();
     if (!fileId) {
       return NextResponse.json({ error: "Falta fileId" }, { status: 400 });
     }
 
-    await drive.files.update({
-      fileId,
-      requestBody: { trashed: true },
-      supportsAllDrives: true,
-    });
+    if (permanent) {
+      await drive.files.delete({ fileId, supportsAllDrives: true });
+    } else {
+      await drive.files.update({
+        fileId,
+        requestBody: { trashed: true },
+        supportsAllDrives: true,
+      });
+    }
 
     return NextResponse.json({ ok: true });
   } catch (err: any) {

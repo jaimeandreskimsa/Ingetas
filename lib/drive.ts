@@ -57,7 +57,7 @@ export function driveErrorResponse(err: any) {
 }
 
 export const FILE_FIELDS =
-  "id, name, mimeType, iconLink, thumbnailLink, webViewLink, webContentLink, size, modifiedTime, shared, parents, imageMediaMetadata(width,height), videoMediaMetadata";
+  "id, name, mimeType, iconLink, thumbnailLink, webViewLink, webContentLink, size, modifiedTime, createdTime, shared, parents, imageMediaMetadata(width,height), videoMediaMetadata";
 
 export type DriveFile = drive_v3.Schema$File;
 

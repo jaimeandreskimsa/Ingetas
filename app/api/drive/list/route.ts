@@ -8,6 +8,8 @@ export const dynamic = "force-dynamic";
  *   ?folderId=<id|root>   carpeta a listar (por defecto la raíz configurada)
  *   ?q=<texto>            búsqueda por nombre en todo el Drive
  *   ?sort=name|modified   orden
+ *   ?trashed=1            listar la papelera (elementos eliminados)
+ *   ?pageToken=<token>    página siguiente (se devuelve nextPageToken)
  */
 export async function GET(req: NextRequest) {
   try {
@@ -18,9 +20,14 @@ export async function GET(req: NextRequest) {
     const folderId = searchParams.get("folderId") || rootId;
     const search = (searchParams.get("q") || "").trim();
     const sort = searchParams.get("sort") || "folder";
+    const trashed = searchParams.get("trashed") === "1";
+    const pageToken = searchParams.get("pageToken") || undefined;
 
     let query: string;
-    if (search) {
+    if (trashed) {
+      // Solo lo eliminado explícitamente (igual que la papelera de Drive)
+      query = "explicitlyTrashed = true";
+    } else if (search) {
       const safe = search.replace(/'/g, "\\'");
       query = `name contains '${safe}' and trashed = false`;
     } else {
@@ -39,13 +46,14 @@ export async function GET(req: NextRequest) {
       fields: `files(${FILE_FIELDS}), nextPageToken`,
       orderBy,
       pageSize: 200,
+      pageToken,
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
     });
 
     // Construimos las migas de pan (breadcrumb) subiendo por los padres.
     const breadcrumb: { id: string; name: string }[] = [];
-    if (!search && folderId !== "root" && folderId !== rootId) {
+    if (!search && !trashed && !pageToken && folderId !== "root" && folderId !== rootId) {
       let current: string | undefined = folderId;
       let guard = 0;
       while (current && guard < 20) {
@@ -65,6 +73,7 @@ export async function GET(req: NextRequest) {
       files: res.data.files || [],
       breadcrumb,
       folderId,
+      nextPageToken: res.data.nextPageToken || null,
     });
   } catch (err: any) {
     const { status, body } = driveErrorResponse(err);
