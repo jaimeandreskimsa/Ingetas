@@ -9,6 +9,8 @@ import {
   List as ListIcon,
   Upload,
   FolderPlus,
+  FolderUp,
+  FolderDown,
   RefreshCw,
   ChevronRight,
   HardDrive,
@@ -69,6 +71,7 @@ export function DriveBrowser({
   >([]);
   const [toast, setToast] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
   const notify = useCallback((msg: string) => {
@@ -131,47 +134,131 @@ export function DriveBrowser({
   function triggerUpload() {
     fileInput.current?.click();
   }
+  function triggerFolderUpload() {
+    folderInput.current?.click();
+  }
+
+  /** Sube un archivo a la carpeta indicada, con barra de progreso. */
+  const uploadOne = useCallback(
+    (file: File, targetFolderId: string, displayName?: string) => {
+      const name = displayName || file.name;
+      const uid = `${name}-${file.size}-${Math.round(performance.now())}`;
+      setUploads((u) => [...u, { id: uid, name, progress: 0 }]);
+
+      const form = new FormData();
+      form.append("file", file);
+      form.append("folderId", targetFolderId);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/drive/upload");
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          setUploads((u) =>
+            u.map((x) => (x.id === uid ? { ...x, progress: pct } : x))
+          );
+        }
+      };
+      xhr.onload = () => {
+        setUploads((u) => u.filter((x) => x.id !== uid));
+        if (xhr.status >= 200 && xhr.status < 300) {
+          notify(`"${name}" subido correctamente`);
+          load();
+        } else {
+          notify(`Error al subir "${name}"`);
+        }
+      };
+      xhr.onerror = () => {
+        setUploads((u) => u.filter((x) => x.id !== uid));
+        notify(`Error al subir "${name}"`);
+      };
+      xhr.send(form);
+    },
+    [load, notify]
+  );
 
   const uploadFiles = useCallback(
     (list: FileList | File[]) => {
-      Array.from(list).forEach((file) => {
-        const uid = `${file.name}-${file.size}-${Math.round(
-          performance.now()
-        )}`;
-        setUploads((u) => [...u, { id: uid, name: file.name, progress: 0 }]);
+      Array.from(list).forEach((file) => uploadOne(file, folderId));
+    },
+    [folderId, uploadOne]
+  );
 
-        const form = new FormData();
-        form.append("file", file);
-        form.append("folderId", folderId);
+  /**
+   * Sube una carpeta completa: crea (o reutiliza) la estructura de subcarpetas
+   * en Drive y luego sube cada archivo en su carpeta correspondiente.
+   */
+  const uploadFolderEntries = useCallback(
+    async (entries: { file: File; relPath: string }[]) => {
+      if (!entries.length) return;
+      const cache = new Map<string, string>(); // ruta relativa -> folderId
 
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", "/api/drive/upload");
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const pct = Math.round((e.loaded / e.total) * 100);
-            setUploads((u) =>
-              u.map((x) => (x.id === uid ? { ...x, progress: pct } : x))
-            );
+      const ensurePath = async (parts: string[]): Promise<string> => {
+        let parent = folderId;
+        let key = "";
+        for (const part of parts) {
+          key = key ? `${key}/${part}` : part;
+          const hit = cache.get(key);
+          if (hit) {
+            parent = hit;
+            continue;
           }
-        };
-        xhr.onload = () => {
-          setUploads((u) => u.filter((x) => x.id !== uid));
-          if (xhr.status >= 200 && xhr.status < 300) {
-            notify(`"${file.name}" subido correctamente`);
-            load();
-          } else {
-            notify(`Error al subir "${file.name}"`);
+          const res = await fetch("/api/drive/create-folder", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: part, parentId: parent, getOrCreate: true }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.file?.id) {
+            throw new Error(data.error || `No se pudo crear "${part}"`);
           }
-        };
-        xhr.onerror = () => {
-          setUploads((u) => u.filter((x) => x.id !== uid));
-          notify(`Error al subir "${file.name}"`);
-        };
-        xhr.send(form);
+          cache.set(key, data.file.id);
+          parent = data.file.id;
+        }
+        return parent;
+      };
+
+      try {
+        notify("Creando estructura de carpetas…");
+        for (const e of entries) {
+          const dirs = e.relPath.split("/").slice(0, -1);
+          if (dirs.length) await ensurePath(dirs);
+        }
+      } catch (e: any) {
+        notify(e.message || "No se pudo crear la estructura de carpetas");
+        return;
+      }
+      load();
+
+      entries.forEach((e) => {
+        const parts = e.relPath.split("/");
+        const dir = parts.slice(0, -1).join("/");
+        const target = dir ? cache.get(dir) || folderId : folderId;
+        uploadOne(e.file, target, e.relPath);
       });
     },
-    [folderId, load, notify]
+    [folderId, load, notify, uploadOne]
   );
+
+  /** Recorre recursivamente una entrada arrastrada (archivo o carpeta). */
+  async function traverseEntry(
+    entry: any,
+    path: string,
+    out: { file: File; relPath: string }[]
+  ) {
+    if (entry.isFile) {
+      const file: File = await new Promise((res, rej) => entry.file(res, rej));
+      out.push({ file, relPath: path ? `${path}/${file.name}` : file.name });
+    } else if (entry.isDirectory) {
+      const dirPath = path ? `${path}/${entry.name}` : entry.name;
+      const reader = entry.createReader();
+      let batch: any[];
+      do {
+        batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        for (const child of batch) await traverseEntry(child, dirPath, out);
+      } while (batch.length);
+    }
+  }
 
   // ---- Compartir ----
   async function doShare(file: DriveFile) {
@@ -223,7 +310,19 @@ export function DriveBrowser({
       onDrop={(e) => {
         e.preventDefault();
         setDragOver(false);
-        if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+        // webkitGetAsEntry debe llamarse de forma síncrona durante el evento
+        const entries = Array.from(e.dataTransfer.items || [])
+          .map((i) => (i as any).webkitGetAsEntry?.())
+          .filter(Boolean);
+        if (entries.length) {
+          (async () => {
+            const out: { file: File; relPath: string }[] = [];
+            for (const en of entries) await traverseEntry(en, "", out);
+            uploadFolderEntries(out);
+          })();
+        } else if (e.dataTransfer.files.length) {
+          uploadFiles(e.dataTransfer.files);
+        }
       }}
     >
       {/* Sidebar */}
@@ -375,6 +474,14 @@ export function DriveBrowser({
             </button>
 
             <button
+              onClick={triggerFolderUpload}
+              className="hidden items-center gap-2 rounded-lg border border-navy-200 px-3 py-2 text-sm font-medium text-navy-700 transition hover:bg-navy-50 sm:inline-flex"
+              title="Subir una carpeta completa con sus subcarpetas"
+            >
+              <FolderUp size={18} /> Subir carpeta
+            </button>
+
+            <button
               onClick={triggerUpload}
               className="inline-flex items-center gap-2 rounded-lg bg-gold-400 px-4 py-2 text-sm font-semibold text-navy-950 transition hover:bg-gold-300"
             >
@@ -390,6 +497,25 @@ export function DriveBrowser({
                 e.target.value = "";
               }}
             />
+            <input
+              ref={folderInput}
+              type="file"
+              hidden
+              // @ts-expect-error: atributo no estándar soportado por los navegadores
+              webkitdirectory=""
+              onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                if (files.length) {
+                  uploadFolderEntries(
+                    files.map((f) => ({
+                      file: f,
+                      relPath: (f as any).webkitRelativePath || f.name,
+                    }))
+                  );
+                }
+                e.target.value = "";
+              }}
+            />
           </div>
         </div>
 
@@ -398,7 +524,7 @@ export function DriveBrowser({
           {dragOver && (
             <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-gold-400 bg-gold-50/80">
               <p className="font-semibold text-gold-700">
-                Suelta los archivos para subirlos
+                Suelta archivos o carpetas para subirlos
               </p>
             </div>
           )}
@@ -698,6 +824,15 @@ function RowMenu({
                 <Download size={16} /> Descargar
               </a>
             )}
+            {isFolder && (
+              <a
+                href={`/api/drive/download-folder?folderId=${file.id}`}
+                className="flex items-center gap-3 px-4 py-2.5 text-sm text-navy-700 transition hover:bg-navy-50"
+                onClick={() => setOpen(null)}
+              >
+                <FolderDown size={16} /> Descargar (ZIP)
+              </a>
+            )}
             <MenuBtn
               icon={Share2}
               label="Compartir"
@@ -821,7 +956,7 @@ function GridView({
                     {isImage ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={`https://drive.google.com/thumbnail?id=${f.id}&sz=w400`}
+                        src={`/api/drive/thumb?fileId=${f.id}&sz=w400`}
                         alt={f.name || ""}
                         className="h-full w-full object-cover"
                         loading="lazy"
@@ -830,7 +965,7 @@ function GridView({
                       <FileIcon mimeType={f.mimeType} size={34} />
                     )}
                     <span
-                      className="absolute right-1.5 top-1.5 rounded-lg bg-white/90 opacity-0 shadow-sm transition group-hover:opacity-100"
+                      className="absolute right-1.5 top-1.5 rounded-lg bg-white/90 shadow-sm"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <RowMenu
