@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDriveClient, driveErrorResponse } from "@/lib/drive";
+import { effectiveId, SHORTCUT_MIME } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -12,17 +13,25 @@ export async function GET(req: NextRequest) {
   try {
     const drive = await getDriveClient();
     const url = new URL(req.url);
-    const fileId = url.searchParams.get("fileId");
+    let fileId = url.searchParams.get("fileId");
     const sz = url.searchParams.get("sz") || "w400";
     if (!fileId) {
       return NextResponse.json({ error: "Falta fileId" }, { status: 400 });
     }
 
-    const meta = await drive.files.get({
+    let meta = await drive.files.get({
       fileId,
-      fields: "thumbnailLink, mimeType, size",
+      fields: "id, thumbnailLink, mimeType, size, shortcutDetails(targetId,targetMimeType)",
       supportsAllDrives: true,
     });
+    if (meta.data.mimeType === SHORTCUT_MIME) {
+      fileId = effectiveId(meta.data);
+      meta = await drive.files.get({
+        fileId,
+        fields: "id, thumbnailLink, mimeType, size",
+        supportsAllDrives: true,
+      });
+    }
 
     let link = meta.data.thumbnailLink;
     if (link) {

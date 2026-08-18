@@ -2,6 +2,7 @@ import { google, drive_v3 } from "googleapis";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { effectiveMime } from "./format";
 
 export const DRIVE_TOKEN_KEY = "google_refresh_token";
 export const DRIVE_ACCOUNT_KEY = "google_account";
@@ -57,10 +58,12 @@ export function driveErrorResponse(err: any) {
 }
 
 export const FILE_FIELDS =
-  "id, name, mimeType, iconLink, thumbnailLink, webViewLink, webContentLink, size, modifiedTime, createdTime, shared, parents, imageMediaMetadata(width,height), videoMediaMetadata";
+  "id, name, mimeType, iconLink, thumbnailLink, webViewLink, webContentLink, size, modifiedTime, createdTime, shared, parents, shortcutDetails(targetId,targetMimeType), imageMediaMetadata(width,height), videoMediaMetadata";
 
 export type DriveFile = drive_v3.Schema$File;
 
 export function isFolder(file: DriveFile): boolean {
-  return file.mimeType === "application/vnd.google-apps.folder";
+  return effectiveMime(file) === "application/vnd.google-apps.folder";
 }
+
+export { effectiveId, effectiveMime, SHORTCUT_MIME } from "./format";

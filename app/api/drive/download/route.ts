@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDriveClient, driveErrorResponse } from "@/lib/drive";
+import { effectiveId, SHORTCUT_MIME } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -28,16 +29,25 @@ const EXPORT_MAP: Record<string, { mime: string; ext: string }> = {
 export async function GET(req: NextRequest) {
   try {
     const drive = await getDriveClient();
-    const fileId = new URL(req.url).searchParams.get("fileId");
+    let fileId = new URL(req.url).searchParams.get("fileId");
     if (!fileId) {
       return NextResponse.json({ error: "Falta fileId" }, { status: 400 });
     }
 
-    const meta = await drive.files.get({
+    let meta = await drive.files.get({
       fileId,
-      fields: "name, mimeType",
+      fields: "id, name, mimeType, shortcutDetails(targetId,targetMimeType)",
       supportsAllDrives: true,
     });
+    // Accesos directos: descarga el destino real
+    if (meta.data.mimeType === SHORTCUT_MIME) {
+      fileId = effectiveId(meta.data);
+      meta = await drive.files.get({
+        fileId,
+        fields: "id, name, mimeType",
+        supportsAllDrives: true,
+      });
+    }
     const name = meta.data.name || "archivo";
     const mimeType = meta.data.mimeType || "application/octet-stream";
 

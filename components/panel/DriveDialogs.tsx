@@ -11,7 +11,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { FileIcon } from "./FileIcon";
-import { formatBytes, formatDate, fileKind } from "@/lib/format";
+import { formatBytes, formatDate, fileKind, effectiveMime, isShortcut } from "@/lib/format";
 import type { DriveFile } from "@/lib/drive";
 
 /* ---------------- Modal base ---------------- */
@@ -147,6 +147,7 @@ export function MoveDialog({
       setFolders(
         (data.files || []).filter(
           (f: DriveFile) =>
+            // Solo carpetas reales (no accesos directos: no se puede mover dentro)
             f.mimeType === "application/vnd.google-apps.folder"
         )
       );
@@ -281,7 +282,7 @@ export function DetailsModal({
   file: DriveFile;
   onClose: () => void;
 }) {
-  const kind = fileKind(file.mimeType);
+  const kind = fileKind(effectiveMime(file));
   const KIND_LABEL: Record<string, string> = {
     folder: "Carpeta",
     image: "Imagen",
@@ -296,7 +297,12 @@ export function DetailsModal({
   };
 
   const rows: { label: string; value: string }[] = [
-    { label: "Tipo", value: KIND_LABEL[kind] || "Archivo" },
+    {
+      label: "Tipo",
+      value: `${KIND_LABEL[kind] || "Archivo"}${
+        isShortcut(file) ? " (acceso directo)" : ""
+      }`,
+    },
     ...(kind !== "folder"
       ? [{ label: "Tamaño", value: formatBytes(file.size) }]
       : []),
@@ -310,7 +316,7 @@ export function DetailsModal({
   return (
     <Modal onClose={onClose} title="Detalles">
       <div className="mb-4 flex items-center gap-3">
-        <FileIcon mimeType={file.mimeType} size={28} />
+        <FileIcon mimeType={effectiveMime(file)} size={28} />
         <p className="min-w-0 flex-1 break-words font-medium text-navy-900">
           {file.name}
         </p>

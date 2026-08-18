@@ -46,7 +46,14 @@ import {
   MoveDialog,
   DetailsModal,
 } from "./DriveDialogs";
-import { formatBytes, formatDate, fileKind, canPreview } from "@/lib/format";
+import {
+  formatBytes,
+  formatDate,
+  fileKind,
+  canPreview,
+  effectiveId,
+  effectiveMime,
+} from "@/lib/format";
 import type { DriveFile } from "@/lib/drive";
 
 type View = "grid" | "list";
@@ -193,15 +200,17 @@ export function DriveBrowser({
   }
 
   function onItemClick(file: DriveFile) {
+    const isFolder = fileKind(effectiveMime(file)) === "folder";
     if (trashMode) {
       // En la papelera no se navega dentro de carpetas
-      if (fileKind(file.mimeType) !== "folder" && canPreview(file.mimeType))
-        setPreview(file);
+      if (!isFolder) setPreview(file);
       return;
     }
-    if (fileKind(file.mimeType) === "folder") openFolder(file.id!);
-    else if (canPreview(file.mimeType)) setPreview(file);
-    else if (file.webViewLink) window.open(file.webViewLink, "_blank");
+    // Los accesos directos a carpetas abren la carpeta de destino
+    if (isFolder) openFolder(effectiveId(file));
+    // Todo lo demás abre el visor (si no hay vista previa, ofrece descargar);
+    // nunca se redirige a drive.google.com (pide sesión de Google).
+    else setPreview(file);
   }
 
   function toggleSelect(id: string) {
@@ -484,8 +493,8 @@ export function DriveBrowser({
     load();
   }
 
-  const folders = files.filter((f) => fileKind(f.mimeType) === "folder");
-  const docs = files.filter((f) => fileKind(f.mimeType) !== "folder");
+  const folders = files.filter((f) => fileKind(effectiveMime(f)) === "folder");
+  const docs = files.filter((f) => fileKind(effectiveMime(f)) !== "folder");
 
   return (
     <div
@@ -1152,7 +1161,7 @@ function RowMenu({
   onDetails?: (f: DriveFile) => void;
   onRestore?: (f: DriveFile) => void;
 }) {
-  const isFolder = fileKind(file.mimeType) === "folder";
+  const isFolder = fileKind(effectiveMime(file)) === "folder";
   const close = () => setOpen(null);
   const item = (fn?: (f: DriveFile) => void) => () => {
     close();
@@ -1195,7 +1204,7 @@ function RowMenu({
               </>
             ) : (
               <>
-                {!isFolder && canPreview(file.mimeType) && (
+                {!isFolder && canPreview(effectiveMime(file)) && (
                   <MenuBtn
                     icon={Eye}
                     label="Previsualizar"
@@ -1367,7 +1376,7 @@ function GridView({
                   checked={selected.has(f.id)}
                   onToggle={() => toggleSelect(f.id)}
                 />
-                <FileIcon mimeType={f.mimeType} />
+                <FileIcon mimeType={effectiveMime(f)} />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium text-navy-800">
                   {f.name}
                 </span>
@@ -1392,7 +1401,7 @@ function GridView({
           </h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
             {docs.map((f: DriveFile) => {
-              const isImage = fileKind(f.mimeType) === "image";
+              const isImage = fileKind(effectiveMime(f)) === "image";
               return (
                 <div
                   key={f.id}
@@ -1413,7 +1422,7 @@ function GridView({
                         loading="lazy"
                       />
                     ) : (
-                      <FileIcon mimeType={f.mimeType} size={34} />
+                      <FileIcon mimeType={effectiveMime(f)} size={34} />
                     )}
                     <span
                       className="absolute left-1.5 top-1.5 rounded-md bg-white/90 p-1 shadow-sm"
@@ -1527,14 +1536,14 @@ function TableView({
               </td>
               <td className="px-4 py-3">
                 <div className="flex items-center gap-3">
-                  <FileIcon mimeType={f.mimeType} size={18} />
+                  <FileIcon mimeType={effectiveMime(f)} size={18} />
                   <span className="truncate font-medium text-navy-800">
                     {f.name}
                   </span>
                 </div>
               </td>
               <td className="hidden px-4 py-3 text-navy-500 sm:table-cell">
-                {fileKind(f.mimeType) === "folder"
+                {fileKind(effectiveMime(f)) === "folder"
                   ? "—"
                   : formatBytes(f.size)}
               </td>

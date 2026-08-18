@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Readable } from "stream";
 import type { drive_v3 } from "googleapis";
 import * as archiverNS from "archiver";
+import { effectiveId, effectiveMime } from "./format";
 
 const archiver = (archiverNS as any).default || archiverNS;
 
@@ -41,7 +42,8 @@ export async function collectFolder(
   do {
     const res = await drive.files.list({
       q: `'${folderId}' in parents and trashed = false`,
-      fields: "nextPageToken, files(id, name, mimeType)",
+      fields:
+        "nextPageToken, files(id, name, mimeType, shortcutDetails(targetId,targetMimeType))",
       pageSize: 1000,
       pageToken,
       supportsAllDrives: true,
@@ -50,10 +52,12 @@ export async function collectFolder(
     for (const f of res.data.files || []) {
       if (!f.id) continue;
       const path = prefix ? `${prefix}/${f.name}` : f.name || f.id;
-      if (f.mimeType === FOLDER_MIME) {
-        await collectFolder(drive, f.id, path, out);
+      const id = effectiveId(f);
+      const mime = effectiveMime(f);
+      if (mime === FOLDER_MIME) {
+        await collectFolder(drive, id, path, out);
       } else {
-        out.push({ id: f.id, path, mimeType: f.mimeType || "" });
+        out.push({ id, path, mimeType: mime });
       }
       if (out.length > MAX_FILES) {
         throw new Error(
@@ -77,18 +81,20 @@ export async function zipResponse(
   const entries: ZipEntry[] = [];
   let zipName = fallbackName;
 
-  for (const id of ids) {
+  for (const rawId of ids) {
     const meta = await drive.files.get({
-      fileId: id,
-      fields: "id, name, mimeType",
+      fileId: rawId,
+      fields: "id, name, mimeType, shortcutDetails(targetId,targetMimeType)",
       supportsAllDrives: true,
     });
-    const name = meta.data.name || id;
-    if (meta.data.mimeType === FOLDER_MIME) {
+    const name = meta.data.name || rawId;
+    const id = effectiveId(meta.data);
+    const mime = effectiveMime(meta.data);
+    if (mime === FOLDER_MIME) {
       if (ids.length === 1) zipName = name;
       await collectFolder(drive, id, ids.length === 1 ? "" : name, entries);
     } else {
-      entries.push({ id, path: name, mimeType: meta.data.mimeType || "" });
+      entries.push({ id, path: name, mimeType: mime });
     }
   }
 

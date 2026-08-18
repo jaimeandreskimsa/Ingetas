@@ -32,6 +32,37 @@ export type FileKind =
   | "archive"
   | "other";
 
+export const SHORTCUT_MIME = "application/vnd.google-apps.shortcut";
+
+type ShortcutLike = {
+  id?: string | null;
+  mimeType?: string | null;
+  shortcutDetails?: { targetId?: string | null; targetMimeType?: string | null } | null;
+};
+
+/**
+ * Los accesos directos de Drive (p. ej. a carpetas compartidas por terceros)
+ * se resuelven a su destino real para navegar/previsualizar/descargar.
+ * Renombrar/eliminar/mover siguen actuando sobre el acceso directo (file.id).
+ */
+export function effectiveId(file: ShortcutLike): string {
+  return (
+    (file.mimeType === SHORTCUT_MIME && file.shortcutDetails?.targetId) ||
+    file.id ||
+    ""
+  );
+}
+export function effectiveMime(file: ShortcutLike): string {
+  return (
+    (file.mimeType === SHORTCUT_MIME && file.shortcutDetails?.targetMimeType) ||
+    file.mimeType ||
+    ""
+  );
+}
+export function isShortcut(file: ShortcutLike): boolean {
+  return file.mimeType === SHORTCUT_MIME;
+}
+
 export function fileKind(mimeType?: string | null): FileKind {
   const m = mimeType || "";
   if (m === "application/vnd.google-apps.folder") return "folder";
@@ -49,6 +80,7 @@ export function fileKind(mimeType?: string | null): FileKind {
   if (
     m.includes("sheet") ||
     m.includes("excel") ||
+    m === "text/csv" ||
     m === "application/vnd.google-apps.spreadsheet"
   )
     return "sheet";
