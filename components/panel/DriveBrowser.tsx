@@ -719,7 +719,7 @@ export function DriveBrowser({
                 <button
                   onClick={triggerFolderUpload}
                   className="hidden items-center gap-2 rounded-lg border border-navy-200 px-3 py-2 text-sm font-medium text-navy-700 transition hover:bg-navy-50 sm:inline-flex"
-                  title="Subir una carpeta completa con sus subcarpetas"
+                  title="Sube una carpeta con sus subcarpetas. Para subir varias carpetas a la vez, arrástralas juntas a esta ventana."
                 >
                   <FolderUp size={18} /> Subir carpeta
                 </button>
@@ -767,9 +767,12 @@ export function DriveBrowser({
         {/* Contenido */}
         <main className="relative flex-1 overflow-auto p-4 sm:p-6">
           {dragOver && (
-            <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-gold-400 bg-gold-50/80">
+            <div className="pointer-events-none absolute inset-3 z-20 flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-gold-400 bg-gold-50/80 text-center">
               <p className="font-semibold text-gold-700">
                 Suelta archivos o carpetas para subirlos
+              </p>
+              <p className="mt-1 text-sm text-gold-700/80">
+                Puedes soltar varias carpetas a la vez: se suben con sus subcarpetas
               </p>
             </div>
           )}
