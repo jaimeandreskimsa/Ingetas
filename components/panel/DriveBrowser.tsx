@@ -1364,7 +1364,9 @@ function GridView({
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-navy-400">
             Carpetas
           </h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {/* Columnas adaptables: cada tarjeta con ancho mínimo para que el
+              nombre completo (con año) no se corte, incluso con zoom alto */}
+          <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(15rem,1fr))]">
             {folders.map((f: DriveFile) => (
               <button
                 key={f.id}
@@ -1405,7 +1407,7 @@ function GridView({
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-navy-400">
             Archivos
           </h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(11rem,1fr))]">
             {docs.map((f: DriveFile) => {
               const isImage = fileKind(effectiveMime(f)) === "image";
               return (
