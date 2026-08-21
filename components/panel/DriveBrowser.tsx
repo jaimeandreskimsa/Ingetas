@@ -1380,7 +1380,10 @@ function GridView({
                   onToggle={() => toggleSelect(f.id)}
                 />
                 <FileIcon mimeType={effectiveMime(f)} />
-                <span className="min-w-0 flex-1 truncate text-sm font-medium text-navy-800">
+                <span
+                  className="line-clamp-2 min-w-0 flex-1 break-words text-sm font-medium leading-snug text-navy-800"
+                  title={f.name || ""}
+                >
                   {f.name}
                 </span>
                 <span onClick={(e) => e.stopPropagation()}>
@@ -1450,7 +1453,10 @@ function GridView({
                     </span>
                   </div>
                   <div className="p-3">
-                    <p className="truncate text-sm font-medium text-navy-800">
+                    <p
+                      className="line-clamp-2 break-words text-sm font-medium leading-snug text-navy-800"
+                      title={f.name || ""}
+                    >
                       {f.name}
                     </p>
                     <p className="mt-0.5 text-xs text-navy-400">
@@ -1540,7 +1546,10 @@ function TableView({
               <td className="px-4 py-3">
                 <div className="flex items-center gap-3">
                   <FileIcon mimeType={effectiveMime(f)} size={18} />
-                  <span className="truncate font-medium text-navy-800">
+                  <span
+                    className="truncate font-medium text-navy-800"
+                    title={f.name || ""}
+                  >
                     {f.name}
                   </span>
                 </div>
